@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}{{ quote.id }} · Follow-up engine{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('index', now=now_param) }}">← All quotes</a></p>
+<h2 style="margin-top:0">{{ quote.id }} · {{ quote.customer_name }} · ${{ "{:,}".format(quote.amount) }}</h2>
+
+{% if candidate %}
+  <p><span class="tier tier-{{ candidate.tier }}">{{ candidate.tier_name }}</span>
+     Rank #{{ candidate.rank }}: {{ candidate.reason }}
+     {% if candidate.over_cap %}<span class="pill">over daily cap</span>{% endif %}</p>
+{% elif excluded %}
+  <p><strong>Excluded:</strong> {{ excluded.reason }}</p>
+{% else %}
+  <p class="muted">Not yet created as of {{ now | ts }}.</p>
+{% endif %}
+
+<div style="display:flex; flex-wrap:wrap; gap:40px">
+  <div>
+    <h2>Snapshot <small>from quotes.json</small></h2>
+    <dl>
+      <dt>Phone</dt><dd>{{ quote.customer_phone }}</dd>
+      <dt>Tech</dt><dd>{{ quote.tech_name }}</dd>
+      <dt>Status</dt><dd>{{ quote.status }}</dd>
+      <dt>Created</dt><dd>{{ quote.created_at | ts }}</dd>
+      <dt>Last contact</dt><dd>{{ quote.last_contact_at | ts }}</dd>
+    </dl>
+  </div>
+  {% if state %}
+  <div>
+    <h2>Derived <small>as of {{ now | ts }}</small></h2>
+    <dl>
+      <dt>Status</dt><dd class="{{ 'diff' if state.status != quote.status }}">{{ state.status }}</dd>
+      <dt>Last outbound</dt><dd class="{{ 'diff' if state.contact_disagrees }}">{{ state.last_outbound | ts }}</dd>
+      <dt>Outbound messages</dt><dd>{{ state.outbound_count }}</dd>
+      <dt>Last view</dt><dd>{{ state.last_view | ts }}</dd>
+      <dt>Views since contact</dt><dd>{{ state.views_since_outbound }}</dd>
+      <dt>Last reply</dt><dd>{{ state.last_reply | ts }}{% if state.last_reply_channel %} ({{ state.last_reply_channel }}){% endif %}</dd>
+      <dt>Unanswered reply</dt><dd>{{ "yes" if state.unanswered_reply else "no" }}</dd>
+    </dl>
+  </div>
+  {% endif %}
+</div>
+
+<h2>Events <small>sorted by timestamp · greyed rows are after "now" and ignored by the policy</small></h2>
+<div class="wrap"><table>
+  <tr><th>Timestamp</th><th>Type</th><th>Channel</th><th>Source</th><th>Event id</th><th>Ingested</th></tr>
+  {% for e in events %}
+  <tr class="{{ 'dim' if e.after_now }}">
+    <td>{{ e.timestamp | ts }}</td>
+    <td>{{ e.type }}</td>
+    <td>{{ e.channel or "" }}{% if e.direction %} <span class="pill">{{ e.direction }}</span>{% endif %}</td>
+    <td>{{ e.source }}</td>
+    <td><details><summary>{{ e.event_id[:8] }}…</summary><pre>{{ e.raw_pretty }}</pre></details></td>
+    <td class="muted">{{ e.ingested_at | ts }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="6" class="muted">No events.</td></tr>
+  {% endfor %}
+</table></div>
+
+<h2>Outbox</h2>
+<div class="wrap"><table>
+  <tr><th>Id</th><th>Status</th><th>Reason</th><th>Body</th><th>Created</th><th>Sent</th></tr>
+  {% for o in outbox %}
+  <tr><td>{{ o.id }}</td><td>{{ o.status }}</td><td>{{ o.reason }}</td><td>{{ o.body }}</td>
+      <td>{{ o.created_at | ts }}</td><td>{{ o.sent_at | ts }}</td></tr>
+  {% else %}
+  <tr><td colspan="6" class="muted">No messages yet.</td></tr>
+  {% endfor %}
+</table></div>
+{% endblock %}

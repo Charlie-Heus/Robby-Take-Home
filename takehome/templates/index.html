@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block content %}
+<p class="muted">
+  {{ counts.quotes }} quotes · {{ counts.events }} events · {{ counts.outbox }} outbox rows ·
+  policy running as of <strong>{{ now | ts }} UTC</strong>
+</p>
+
+{% if not counts.quotes %}
+  <p>No data yet. Click <strong>Load seed data</strong>.</p>
+{% else %}
+
+<h2>Follow-up candidates <small>{{ f.candidates | rejectattr("over_cap") | list | length }} today, {{ f.candidates | selectattr("over_cap") | list | length }} carried over</small></h2>
+<div class="wrap"><table>
+  <tr><th>#</th><th>Tier</th><th>Quote</th><th>Customer</th><th>Tech</th><th class="num">Amount</th><th>Reason</th></tr>
+  {% for c in f.candidates %}
+  <tr class="{{ 'dim' if c.over_cap }}">
+    <td>{{ c.rank }}</td>
+    <td><span class="tier tier-{{ c.tier }}">{{ c.tier_name }}</span></td>
+    <td><a href="{{ url_for('quote_detail', quote_id=c.state.id, now=now_param) }}">{{ c.state.id }}</a></td>
+    <td>{{ c.state.quote.customer_name }}</td>
+    <td>{{ c.state.quote.tech_name }}</td>
+    <td class="num">${{ "{:,}".format(c.state.amount) }}</td>
+    <td>{{ c.reason }}{% if c.over_cap %} <span class="pill">over daily cap</span>{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table></div>
+
+<h2>Excluded <small>not messaged, and why</small></h2>
+<div class="wrap"><table>
+  <tr><th>Quote</th><th>Customer</th><th class="num">Amount</th><th>Reason</th></tr>
+  {% for x in f.excluded %}
+  <tr>
+    <td><a href="{{ url_for('quote_detail', quote_id=x.state.id, now=now_param) }}">{{ x.state.id }}</a></td>
+    <td>{{ x.state.quote.customer_name }}</td>
+    <td class="num">${{ "{:,}".format(x.state.amount) }}</td>
+    <td>{{ x.reason }}</td>
+  </tr>
+  {% endfor %}
+</table></div>
+
+<h2>All quotes <small>snapshot vs. derived from events · <span class="diff">highlighted</span> where they disagree</small></h2>
+<div class="wrap"><table>
+  <tr>
+    <th>Quote</th><th>Customer</th><th>Phone</th><th>Tech</th><th class="num">Amount</th>
+    <th>Snapshot status</th><th>Derived status</th>
+    <th>Snapshot last contact</th><th>Derived last outbound</th>
+    <th>Last view</th><th class="num">Views since contact</th><th>Unanswered reply</th>
+  </tr>
+  {% for s in states %}
+  <tr>
+    <td><a href="{{ url_for('quote_detail', quote_id=s.id, now=now_param) }}">{{ s.id }}</a></td>
+    <td>{{ s.quote.customer_name }}</td>
+    <td>{{ s.phone }}</td>
+    <td>{{ s.quote.tech_name }}</td>
+    <td class="num">${{ "{:,}".format(s.amount) }}</td>
+    <td>{{ s.quote.status }}</td>
+    <td class="{{ 'diff' if s.status != s.quote.status }}">{{ s.status }}</td>
+    <td>{{ s.quote.last_contact_at | ts }}</td>
+    <td class="{{ 'diff' if s.contact_disagrees }}">{{ s.last_outbound | ts }}</td>
+    <td>{{ s.last_view | ts }}</td>
+    <td class="num">{{ s.views_since_outbound }}</td>
+    <td>{{ "yes" if s.unanswered_reply else "" }}</td>
+  </tr>
+  {% endfor %}
+</table></div>
+{% endif %}
+{% endblock %}
