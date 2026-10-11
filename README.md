@@ -2,6 +2,25 @@
 
 An MVP that looks at open home-service quotes, decides who to follow up with and why, drafts the messages, and sends them only after a person approves.
 
+## Running it
+
+Needs Python 3.11+.
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python -m takehome.web        # open http://127.0.0.1:5001
+.venv/bin/python -m pytest              # run the tests
+```
+
+The app uses port 5001 because macOS's AirPlay Receiver uses 5000. In the app:
+
+- **Load seed data** loads the quotes and events. Clicking it again duplicates nothing. **Reset DB** starts over.
+- **Now (UTC) + Go** replays the engine as of any date and time. The default is Aug 17, 9am Eastern.
+- **Today** shows the ranked candidates next to the excluded quotes and the reason for each. **Generate drafts for today** fills today's outbox. Then **Approve**, **Send**, or **Retry** a failed send.
+- **All quotes** shows what `quotes.json` says next to what the events say. Click any quote id to see its full event history and messages.
+- Nothing is really texted. "Sent" messages are written to `sent_messages.jsonl`.
+
 ## Architecture
 
 Python 3.11+, SQLite and a small Flask app. Everything lives in the `takehome/` package:
@@ -67,12 +86,16 @@ Tests in `tests/` cover ingest, the policy and the send flow.
 - **Unknown event types (like `quote_sent`) and events for unknown quotes are stored, not dropped.**
   *Why:* real webhook streams change. The logic ignores what it doesn't understand, but nothing is lost.
 - **Bad lines are skipped and reported. Timestamps are converted to UTC, and phone numbers to `+1XXXXXXXXXX`.**
-  *Why:* timestamps are compared as text, so one odd format would quietly put events in the wrong order. The phone number is how we identify a customer. Timestamps without a timezone are rejected rather than guessed at. Phone handling assumes US numbers.
+  *Why:* timestamps are compared as text, so one odd format would quietly put events in the wrong order. The phone number is how we identify a customer. Timestamps without a timezone are rejected rather than guessed at, and fractions of a second are dropped. Phone handling assumes US numbers.
 - **On re-import, a closed quote never reopens, and `last_contact_at` never moves backwards.**
   *Why:* dismissals only arrive through the snapshot, so it has to be re-importable, but an old export mustn't make a closed quote eligible for messages again.
 
 ### Who to contact
 
+- **A `quote_accepted` event closes a quote even if the snapshot still says "open", and later views never reopen it.**
+  *Why:* either source can be the first to know. Q-1017 is accepted in the snapshot with no event, and in production an acceptance event can arrive before the next snapshot. Views keep coming after a quote closes (Q-1004 and Q-1009). Wrongly messaging a customer who already decided is worse than missing a rare reopen, which a person can handle.
+- **New quotes wait 24 hours. Quotes over 30 days old, or with 3 follow-ups and no response, are surfaced as "close it out?" instead of nudged.**
+  *Why:* the customer deserves a day to look before being chased, and past a point more nudges are noise. A person should decide whether the deal is dead.
 - **The cooldown is per phone number, counts outbound messages only, and lasts 72 hours.**
   *Why:* one customer can have several quotes (Karen Nguyen has two on the same phone), and texting her about each would break the cooldown. A customer reply is a reason to answer, not a reason to wait.
 - **The snapshot's `last_contact_at` counts as an outbound message.**
@@ -83,10 +106,14 @@ Tests in `tests/` cover ingest, the policy and the send flow.
   *Why:* every candidate gets a reason the owner can act on ("she replied and we didn't answer"), the order is easy to defend, and each shop could tune it. A weighted score fitted to 30 quotes would be guesswork.
 - **Interest beats size.** A recently viewed $850 quote ranks above a quiet $22,000 one.
   *Why:* the big quote will still be there tomorrow; the moment of interest won't.
+- **Within "Hot", the number of views shows in the reason but doesn't change the order; amount does.**
+  *Why:* one ordering rule across all groups is easier to explain and defend than a separate rule per group.
 - **One candidate per customer, and a cap of 10 per day.** The cap counts messages already drafted that day.
   *Why:* the owner's problem today is scrolling 60 quotes, and 25 drafts would recreate it. Counting today's drafts stops a second click on "Generate" from adding 10 more.
 - **"Now" is a parameter, and events after it are ignored.**
-  *Why:* the seed data is from August, and replaying any point in time makes the policy easy to test and demo. Moving "now" backwards can get past the guardrails, but that's demo-only: in production "now" is the real clock.
+  *Why:* the seed data is from August, and replaying any point in time makes the policy easy to test and demo. The default is Aug 17, 9am Eastern, the morning after the last seed event. The snapshot's status has no timestamp, so it applies at any "now". Moving "now" backwards can get past the guardrails, but that's demo-only: in production "now" is the real clock.
+- **Every threshold (cooldown, windows, $5,000 line, daily cap) lives in one `Policy` object.**
+  *Why:* they're judgment calls a shop will want to change, so they belong in one place, not scattered through the code.
 - **"Close it out?" counts only `message_sent` events, not the snapshot's `last_contact_at`.** After 3 follow-ups with no response, a quote stops being nudged.
   *Why:* the snapshot only gives one timestamp, so it can't say how many messages it stands for. The side effect is that a quote whose contacts exist only in the snapshot can be nudged more than 3 times in total. The cooldown still counts the snapshot contact.
 - **A customer reply is treated as "they want an answer", whatever it says.**
@@ -105,12 +132,28 @@ Tests in `tests/` cover ingest, the policy and the send flow.
 - **The idempotency key is the quote plus our last contact with the customer. When an unsent message expires, it gives up its key, so the customer's next draft reuses it.**
   *Why:* re-running the engine on the same state produces the same key and is skipped. After a send, the last contact changes, so the next follow-up gets a new key. Releasing the key on expiry fixes a bug found in review: a send that timed out *after* actually going out, then expired and was redrafted under a new key, would have texted the customer twice. With the same key, the provider recognises the repeat.
 - **"Blocked" and "failed" are separate statuses.** Blocked means a guardrail stopped the send, and it's final. Failed means the SMS provider errored, and it can be retried on the same row with the same key.
-  *Why:* retrying a blocked message would be wrong, and a retry must never become a second, different message.
+  *Why:* retrying a blocked message would be wrong, and a retry must never become a second, different message. Both statuses free the customer's one unsent-message slot. A retry goes straight from failed to sent without passing through an active status again, so it can't collide with that rule.
 - **Retrying a send is only safe if the real SMS provider supports idempotency keys.**
   *Why:* if the provider already delivered a key, it should return the original message instead of texting again. That's what makes a retry safe when the first attempt actually went out but the response was lost. The fake provider behaves this way. With a provider that doesn't support idempotency keys, a retry after a timeout could text the customer twice. That would need crash recovery instead: mark the row `sending` before calling the provider, and have a person check unclear results rather than retrying.
 - **The outbox works one day at a time.** Unsent messages expire at the end of their day and are marked `cancelled`, never deleted.
   *Why:* each morning starts from a fresh, ranked list instead of yesterday's leftovers. Keeping the rows preserves the record of what happened.
+- **Discard deletes a draft.**
+  *Why:* the simplest option. Two known side effects: a discarded draft comes back if you click "Generate" again the same day, and a draft whose quote closes later that day is only caught when someone tries to send it. Marking it `cancelled` instead of deleting it would fix the first.
+- **The SMS provider is faked, sends use the app's "now" as the clock, and the approver is a hard-coded "owner" with no login.**
+  *Why:* the assignment is about the decisions and the guardrails, not real texting, deployment or auth. The fake provider sits behind a small `send(to, body, idempotency_key)` interface, so a real one (such as Twilio) can replace it. In production, the provider's delivered and failed callbacks would come back in as events, and the approver would be the signed-in user.
 - **"Needs a reply" quotes get a template draft too.**
   *Why:* it was simpler than writing real answers for a demo. The side effect is that sending it counts as our reply, so the quote leaves "Needs a reply" even though the real answer is still owed. In production the owner would edit the draft before approving, so what goes out *is* the answer.
 - **Templates never mention that the customer viewed the quote.**
   *Why:* "I saw you looked at your quote" reads as creepy.
+
+### Other signals worth adding
+
+The seed data doesn't carry these, so the policy doesn't use them yet:
+
+- **A view right after our message:** it landed, and they're thinking about it.
+- **Bursts of views in a short time:** likely comparing quotes. Q-1012 got 3 views in 11 hours.
+- **The channel they replied on:** someone who replies by email should get the follow-up by email.
+- **Quiet hours in the customer's local time:** texting rules generally allow only 8am to 9pm.
+- **Opt-outs (STOP):** a hard filter, required by law.
+- **Quote expiry dates and job urgency:** a broken AC in August can't wait.
+- **The tech's notes and repeat customers.**
