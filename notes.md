@@ -15,6 +15,21 @@
 
 ## Revisit later
 - **Cooldown vs. "Needs a reply" quotes.** The 72h cooldown currently applies to tier 1 too: if a customer replies 1h after our text, the engine won't draft an answer for another 71h. The assignment's "never message twice within cooldown" reads as absolute, but answering a customer's question arguably shouldn't count. For now that reply comes from a person outside the engine.
+- **Crash recovery.** Add a `sending` status (claim the row before calling the provider) and handle unclear results (timeouts, a crash mid-send) by sending them to a person instead of retrying automatically: at-most-once beats at-least-once for customer texts.
+- **Provider-side idempotency keys and delivery callbacks.** Pass our idempotency key to the real SMS provider so it drops repeats; ingest its delivered/failed callbacks as events.
+- **Retrying `failed` sends.** For now a failed row is final. Side effect: after a provider error, the same key blocks re-drafting that quote until there's new contact.
+- **Cancelling stale drafts automatically.** A draft whose quote has since closed is only caught at send time. Would add a `cancelled` status; that would also stop a discarded (deleted) draft from being re-created by the next "Generate drafts".
+- **Editing draft text.** Especially "Needs a reply" drafts, which should be written by a person.
+
+## Send flow (takehome/outbox.py), simple version
+- `draft → approved → sent`; a blocked send or provider error → `failed` with the reason; discard deletes a draft.
+- **Send re-checks guardrails** (quote closed? phone in cooldown?) inside the same transaction that records the send (`BEGIN IMMEDIATE`). Blocked → `failed`, which also frees the customer's one-active-message slot.
+- **Only `approved` rows send**, so double clicks / retries / re-runs are no-ops.
+- **Idempotency key = quote + last outbound contact.** Re-running the engine on the same state can't create a second draft; after a send the anchor moves, so the next quiet period gets its own key.
+- **A send writes a `message_sent` event** (`engine:<key>`), so the policy's cooldown picks it up automatically.
+- **Daily cap counts today's drafts**, so clicking "Generate drafts" again doesn't refill it with the next 10.
+- Fake provider logs to `sent_messages.jsonl`. Sends use the UI's "now" as the clock. Approver is hard-coded "owner" (no auth).
+- Templates per tier never mention that the customer viewed the quote (it reads as creepy).
 
 ## Ranking logic (takehome/policy.py)
 
@@ -46,6 +61,8 @@
 
 ## Log: schema setup (6:51 PM)
 
+_The package was later renamed from `followup` to `takehome`; paths below are updated to match._
+
 ### Check Python and SQLite versions
 ```
 $ python3 --version && python3 -c "import sqlite3;print(sqlite3.sqlite_version)"
@@ -54,12 +71,12 @@ Python 3.13.5
 ```
 
 ### Files written
-- `followup/schema.sql` (63 lines)
-- `followup/db.py` (26 lines)
-- `followup/__init__.py` (empty)
+- `takehome/schema.sql` (63 lines)
+- `takehome/db.py` (26 lines)
+- `takehome/__init__.py` (empty)
 - `.gitignore` (`*.db`, `__pycache__/`, `.DS_Store`)
 
-#### followup/schema.sql
+#### takehome/schema.sql
 ```sql
 -- All timestamps are ISO-8601 UTC strings ("2026-08-16T16:00:00Z"), so they sort lexically.
 
@@ -125,14 +142,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS outbox_one_active_per_phone
     WHERE status IN ('draft', 'approved', 'sending');
 ```
 
-#### followup/db.py
+#### takehome/db.py
 ```python
 import sqlite3
 import sys
 from pathlib import Path
 
 SCHEMA = Path(__file__).with_name("schema.sql")
-DEFAULT_DB = Path(__file__).resolve().parent.parent / "followup.db"
+DEFAULT_DB = Path(__file__).resolve().parent.parent / "takehome.db"
 
 
 def connect(path=DEFAULT_DB):
@@ -157,9 +174,9 @@ if __name__ == "__main__":
 ### Init schema twice and probe constraints
 Checks that init runs, is safe to re-run, and that the constraints actually bite.
 ```
-D=/private/tmp/claude-501/-Users-charlieheus-Desktop-Robby/cdb4d953-f023-4076-965f-df8bd7ae7299/scratchpad/t.db && rm -f $D && python3 -m followup.db $D && python3 -m followup.db $D && python3 - $D <<'PY'
+D=/private/tmp/claude-501/-Users-charlieheus-Desktop-Robby/cdb4d953-f023-4076-965f-df8bd7ae7299/scratchpad/t.db && rm -f $D && python3 -m takehome.db $D && python3 -m takehome.db $D && python3 - $D <<'PY'
 import sys, sqlite3
-from followup.db import connect
+from takehome.db import connect
 c=connect(sys.argv[1])
 c.execute("insert into quotes values('Q-1','A','+1','T',100,'open','2026-08-01T00:00:00Z',null)")
 c.execute("insert into quotes values('Q-2','A','+1','T',100,'open','2026-08-01T00:00:00Z',null)")
@@ -194,7 +211,7 @@ The duplicate-key insert above was caught by the per-phone index first, so the i
 ```
 python3 - <<'PY'
 import sqlite3
-from followup.db import connect, init_db
+from takehome.db import connect, init_db
 c=connect(":memory:"); init_db(c)
 c.execute("insert into quotes values('Q-1','A','+1','T',100,'open','x',null)")
 ins="insert into outbox(idempotency_key,quote_id,customer_phone,reason,body,status,created_at) values('k1','Q-1','+1','r','b','sent','now')"
@@ -209,8 +226,8 @@ REJECTED - UNIQUE constraint failed: outbox.idempotency_key
 ```
 
 ### Result
-The schema is in place: the three tables are in `followup/schema.sql`, and `followup/db.py` creates them. Plain Python, no dependencies. To create the database:
+The schema is in place: the three tables are in `takehome/schema.sql`, and `takehome/db.py` creates them. Plain Python, no dependencies. To create the database:
 ```
-python3 -m followup.db
+python3 -m takehome.db
 ```
-That writes `followup.db` in the project folder (gitignored). Running it again is safe.
+That writes `takehome.db` in the project folder (gitignored). Running it again is safe.

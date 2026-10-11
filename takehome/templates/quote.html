@@ -60,12 +60,12 @@
 
 <h2>Outbox</h2>
 <div class="wrap"><table>
-  <tr><th>Id</th><th>Status</th><th>Reason</th><th>Body</th><th>Created</th><th>Sent</th></tr>
+  <tr><th>Id</th><th>Status</th><th>Reason</th><th>Body</th><th>Created</th><th>Sent</th><th>Error</th></tr>
   {% for o in outbox %}
-  <tr><td>{{ o.id }}</td><td>{{ o.status }}</td><td>{{ o.reason }}</td><td>{{ o.body }}</td>
-      <td>{{ o.created_at | ts }}</td><td>{{ o.sent_at | ts }}</td></tr>
+  <tr><td>{{ o.id }}</td><td><span class="pill status-{{ o.status }}">{{ o.status }}</span></td><td>{{ o.reason }}</td><td>{{ o.body }}</td>
+      <td>{{ o.created_at | ts }}</td><td>{{ o.sent_at | ts }}</td><td>{{ o.last_error or "" }}</td></tr>
   {% else %}
-  <tr><td colspan="6" class="muted">No messages yet.</td></tr>
+  <tr><td colspan="7" class="muted">No messages yet.</td></tr>
   {% endfor %}
 </table></div>
 {% endblock %}

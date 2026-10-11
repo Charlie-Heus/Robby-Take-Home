@@ -8,13 +8,17 @@ from flask import Flask, abort, flash, redirect, render_template, request, url_f
 
 from takehome.db import DEFAULT_DB, connect, init_db
 from takehome.ingest import ROOT, ingest_events, ingest_quotes
+from takehome import outbox as ob
 from takehome.policy import DEFAULT_NOW, TIER_NAMES, build_followups, format_ts, parse_ts
 
+APPROVER = "owner"  # no auth in the MVP; a real app records the signed-in user
 
-def create_app(db_path=None):
+
+def create_app(db_path=None, provider=None):
     app = Flask(__name__)
     app.secret_key = "local-dev-only"
     app.config["DB"] = db_path or os.environ.get("TAKEHOME_DB", DEFAULT_DB)
+    provider = provider or ob.FakeSmsProvider(log_path=ROOT / "sent_messages.jsonl")
 
     def db():
         conn = connect(app.config["DB"])
@@ -50,9 +54,48 @@ def create_app(db_path=None):
         conn = db()
         followups = build_followups(conn, current_now())
         counts = {t: conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for t in ("quotes", "events", "outbox")}
+        messages = conn.execute(
+            "SELECT o.*, q.customer_name FROM outbox o JOIN quotes q ON q.id = o.quote_id ORDER BY o.id DESC").fetchall()
         conn.close()
         states = sorted(followups.states.values(), key=lambda s: s.id)
-        return render_template("index.html", f=followups, states=states, counts=counts)
+        return render_template("index.html", f=followups, states=states, counts=counts, messages=messages)
+
+    def back():
+        return redirect(url_for("index", now=request.args.get("now")) + "#outbox")
+
+    @app.post("/drafts")
+    def generate():
+        conn = db()
+        r = ob.generate_drafts(conn, current_now())
+        conn.close()
+        flash(f"Drafts: {r['created']} created, {r['skipped']} already existed.", "info")
+        return back()
+
+    @app.post("/outbox/<int:oid>/approve")
+    def approve(oid):
+        conn = db()
+        ok = ob.approve(conn, oid, APPROVER, current_now())
+        conn.close()
+        flash(f"Message {oid} approved." if ok else f"Message {oid} is not a draft; nothing changed.",
+              "info" if ok else "error")
+        return back()
+
+    @app.post("/outbox/<int:oid>/discard")
+    def discard(oid):
+        conn = db()
+        ok = ob.discard(conn, oid)
+        conn.close()
+        flash(f"Message {oid} discarded." if ok else f"Message {oid} is not a draft; nothing changed.",
+              "info" if ok else "error")
+        return back()
+
+    @app.post("/outbox/<int:oid>/send")
+    def send(oid):
+        conn = db()
+        outcome, detail = ob.send(conn, oid, provider, current_now())
+        conn.close()
+        flash(f"Message {oid}: {outcome}. {detail}", "info" if outcome == "sent" else "error")
+        return back()
 
     @app.get("/quotes/<quote_id>")
     def quote_detail(quote_id):

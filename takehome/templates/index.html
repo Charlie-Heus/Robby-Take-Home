@@ -10,6 +10,7 @@
 {% else %}
 
 <h2>Follow-up candidates <small>{{ f.candidates | rejectattr("over_cap") | list | length }} today, {{ f.candidates | selectattr("over_cap") | list | length }} carried over</small></h2>
+<form method="post" action="{{ url_for('generate', now=now_param) }}"><button>Generate drafts for today</button></form>
 <div class="wrap"><table>
   <tr><th>#</th><th>Tier</th><th>Quote</th><th>Customer</th><th>Tech</th><th class="num">Amount</th><th>Reason</th></tr>
   {% for c in f.candidates %}
@@ -22,6 +23,36 @@
     <td class="num">${{ "{:,}".format(c.state.amount) }}</td>
     <td>{{ c.reason }}{% if c.over_cap %} <span class="pill">over daily cap</span>{% endif %}</td>
   </tr>
+  {% endfor %}
+</table></div>
+
+<h2 id="outbox">Outbox <small>draft → approve → send · sends use the "now" above as the clock</small></h2>
+<div class="wrap"><table>
+  <tr><th>Id</th><th>Status</th><th>Quote</th><th>Customer</th><th>Message</th><th>Why</th><th>Actions / result</th></tr>
+  {% for m in messages %}
+  <tr class="{{ 'dim' if m.status in ('sent', 'failed') }}">
+    <td>{{ m.id }}</td>
+    <td><span class="pill status-{{ m.status }}">{{ m.status }}</span></td>
+    <td><a href="{{ url_for('quote_detail', quote_id=m.quote_id, now=now_param) }}">{{ m.quote_id }}</a></td>
+    <td>{{ m.customer_name }}<br><span class="muted">{{ m.customer_phone }}</span></td>
+    <td>{{ m.body }}</td>
+    <td class="muted">{{ m.reason }}</td>
+    <td>
+      {% if m.status == 'draft' %}
+        <form method="post" action="{{ url_for('approve', oid=m.id, now=now_param) }}" style="display:inline"><button>Approve</button></form>
+        <form method="post" action="{{ url_for('discard', oid=m.id, now=now_param) }}" style="display:inline"><button>Discard</button></form>
+      {% elif m.status == 'approved' %}
+        <form method="post" action="{{ url_for('send', oid=m.id, now=now_param) }}" style="display:inline"><button>Send</button></form>
+        <span class="muted">approved by {{ m.approved_by }}</span>
+      {% elif m.status == 'sent' %}
+        sent {{ m.sent_at | ts }}
+      {% else %}
+        {{ m.last_error }}
+      {% endif %}
+    </td>
+  </tr>
+  {% else %}
+  <tr><td colspan="7" class="muted">No messages yet. Click "Generate drafts for today".</td></tr>
   {% endfor %}
 </table></div>
 

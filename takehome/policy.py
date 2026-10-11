@@ -151,6 +151,33 @@ def load_states(conn, now):
     return {q["id"]: derive_state(q, events.get(q["id"], [])) for q in quotes}
 
 
+def phone_last_outbound(states):
+    """Latest outbound contact per phone across all its quotes, as {phone: (when, quote_id)}."""
+    phone_last = {}
+    for s in states.values():
+        if s.last_outbound and (s.phone not in phone_last or s.last_outbound > phone_last[s.phone][0]):
+            phone_last[s.phone] = (s.last_outbound, s.id)
+    return phone_last
+
+
+def send_blocker(states, quote_id, phone, now, policy=Policy()):
+    """Return why a message about this quote must not go out right now, or None.
+
+    The two guardrails re-checked at send time: the quote is closed, or the
+    customer (phone) is inside the cooldown window.
+    """
+    s = states.get(quote_id)
+    if s is None:
+        return "Quote not found"
+    if s.status in CLOSED:
+        return f"Quote is {s.status}"
+    last, via = phone_last_outbound(states).get(phone, (None, None))
+    if last and now - last < policy.cooldown:
+        other = f" about {via}" if via != quote_id else ""
+        return f"Customer contacted {ago(now - last)} ago{other}; cooldown until {format_ts(last + policy.cooldown)}"
+    return None
+
+
 def _exclusion(s, now, p, phone_last, in_flight):
     """Return why this quote must not be a candidate, or None."""
     if s.status in CLOSED:
@@ -192,10 +219,7 @@ def build_followups(conn, now=DEFAULT_NOW, policy=Policy()):
     states = load_states(conn, now)
 
     # Cooldown is per customer: the latest outbound to a phone across all its quotes.
-    phone_last = {}
-    for s in states.values():
-        if s.last_outbound and (s.phone not in phone_last or s.last_outbound > phone_last[s.phone][0]):
-            phone_last[s.phone] = (s.last_outbound, s.id)
+    phone_last = phone_last_outbound(states)
     in_flight = {r["customer_phone"]: r["quote_id"] for r in conn.execute(
         f"SELECT customer_phone, quote_id FROM outbox WHERE status IN ({', '.join('?' * len(ACTIVE_OUTBOX))})",
         ACTIVE_OUTBOX,
@@ -211,6 +235,12 @@ def build_followups(conn, now=DEFAULT_NOW, policy=Policy()):
 
     candidates.sort(key=lambda c: (c.tier, -c.state.amount, c.state.id))
 
+    # The daily cap counts messages already drafted today, so drafting doesn't refill it.
+    drafted_today = conn.execute(
+        "SELECT COUNT(*) FROM outbox WHERE substr(created_at, 1, 10) = ?", (format_ts(now)[:10],)
+    ).fetchone()[0]
+    slots = max(policy.daily_cap - drafted_today, 0)
+
     # One candidate per customer: a second quote on the same phone waits its turn.
     ranked, best_for_phone = [], {}
     for c in candidates:
@@ -219,7 +249,7 @@ def build_followups(conn, now=DEFAULT_NOW, policy=Policy()):
             continue
         best_for_phone[c.state.phone] = c.state.id
         c.rank = len(ranked) + 1
-        c.over_cap = c.rank > policy.daily_cap
+        c.over_cap = c.rank > slots
         ranked.append(c)
 
     excluded.sort(key=lambda e: e.state.id)

@@ -2,3 +2,4 @@
 __pycache__/
 .DS_Store
 .venv/
+sent_messages.jsonl
