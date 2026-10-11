@@ -34,9 +34,12 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS events_quote_ts ON events (quote_id, timestamp);
 
 -- Messages the engine drafts and sends. Lifecycle:
---   draft -> approved -> sending -> sent
---                           \-> failed -> (retry) sending
+--   draft -> approved -> sent
+--                     -> blocked   a guardrail stopped it (final)
+--                     -> failed    provider error; retry sends the same row, same key
 -- A draft can also be discarded (deleted) before approval.
+-- Drafts, approved and failed rows not sent by the end of their day become 'cancelled' (kept, not deleted).
+-- 'sending' is reserved for crash recovery with providers that lack idempotency keys (not used yet).
 CREATE TABLE IF NOT EXISTS outbox (
     id                  INTEGER PRIMARY KEY,
     idempotency_key     TEXT NOT NULL UNIQUE,  -- re-running the engine can't create a second row
@@ -45,7 +48,7 @@ CREATE TABLE IF NOT EXISTS outbox (
     channel             TEXT NOT NULL DEFAULT 'sms',
     reason              TEXT NOT NULL,
     body                TEXT NOT NULL,
-    status              TEXT NOT NULL CHECK (status IN ('draft', 'approved', 'sending', 'sent', 'failed')),
+    status              TEXT NOT NULL CHECK (status IN ('draft', 'approved', 'sending', 'sent', 'failed', 'blocked', 'cancelled')),
     created_at          TEXT NOT NULL,
     approved_at         TEXT,
     approved_by         TEXT,

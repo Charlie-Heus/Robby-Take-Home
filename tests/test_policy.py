@@ -152,3 +152,4 @@ def test_seed_ranking_as_of_aug_17(conn):
     assert "Q-1019" not in ids                                # in cooldown until 14:00
     assert not ({"Q-1003", "Q-1025"} <= set(ids))             # Karen gets one slot, not two
     assert sum(not c.over_cap for c in f.candidates) == 10
+

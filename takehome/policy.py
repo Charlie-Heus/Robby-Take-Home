@@ -56,12 +56,6 @@ class QuoteState:
     def amount(self):
         return self.quote["amount"]
 
-    @property
-    def contact_disagrees(self):
-        """True when events show a later outbound contact than the snapshot records."""
-        snap = self.quote["last_contact_at"]
-        return self.last_outbound is not None and (snap is None or self.last_outbound > parse_ts(snap))
-
 
 @dataclass
 class Candidate:
@@ -220,9 +214,12 @@ def build_followups(conn, now=DEFAULT_NOW, policy=Policy()):
 
     # Cooldown is per customer: the latest outbound to a phone across all its quotes.
     phone_last = phone_last_outbound(states)
+    # Only today's unsent messages hold a customer. Unsent ones from earlier days have
+    # expired, so those customers roll over into today's candidates.
     in_flight = {r["customer_phone"]: r["quote_id"] for r in conn.execute(
-        f"SELECT customer_phone, quote_id FROM outbox WHERE status IN ({', '.join('?' * len(ACTIVE_OUTBOX))})",
-        ACTIVE_OUTBOX,
+        f"SELECT customer_phone, quote_id FROM outbox WHERE status IN ({', '.join('?' * len(ACTIVE_OUTBOX))})"
+        " AND substr(created_at, 1, 10) = ?",
+        (*ACTIVE_OUTBOX, format_ts(now)[:10]),
     )}
 
     candidates, excluded = [], []

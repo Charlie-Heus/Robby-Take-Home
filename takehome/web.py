@@ -2,14 +2,13 @@
 import json
 import os
 from datetime import datetime, timezone
-from pathlib import Path
 
-from flask import Flask, abort, flash, redirect, render_template, request, url_for
+from flask import Flask, abort, flash, g, redirect, render_template, request, url_for
 
+from takehome import outbox as ob
 from takehome.db import DEFAULT_DB, connect, init_db
 from takehome.ingest import ROOT, ingest_events, ingest_quotes
-from takehome import outbox as ob
-from takehome.policy import DEFAULT_NOW, TIER_NAMES, build_followups, format_ts, parse_ts
+from takehome.policy import DEFAULT_NOW, build_followups, format_ts, parse_ts
 
 APPROVER = "owner"  # no auth in the MVP; a real app records the signed-in user
 
@@ -26,7 +25,12 @@ def create_app(db_path=None, provider=None):
         return conn
 
     def current_now():
-        """The "now" the policy runs as of. Comes from ?now=, interpreted as UTC."""
+        """The "now" the policy runs as of. Comes from ?now=, interpreted as UTC. Parsed once per request."""
+        if "now" not in g:
+            g.now = _parse_now()
+        return g.now
+
+    def _parse_now():
         raw = request.args.get("now")
         if not raw:
             return parse_ts(DEFAULT_NOW)
@@ -47,18 +51,28 @@ def create_app(db_path=None, provider=None):
     @app.context_processor
     def globals_():
         now = current_now() if request.endpoint else parse_ts(DEFAULT_NOW)
-        return {"now": now, "now_param": now.strftime("%Y-%m-%dT%H:%M"), "tier_names": TIER_NAMES}
+        return {"now": now, "now_param": now.strftime("%Y-%m-%dT%H:%M")}
 
     @app.get("/")
     def index():
         conn = db()
         followups = build_followups(conn, current_now())
         counts = {t: conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for t in ("quotes", "events", "outbox")}
+        # Today's messages only: unsent ones from earlier days have expired and those
+        # customers are back in the candidates. Drafts are inserted in rank order, so id ASC = priority.
         messages = conn.execute(
-            "SELECT o.*, q.customer_name FROM outbox o JOIN quotes q ON q.id = o.quote_id ORDER BY o.id DESC").fetchall()
+            "SELECT o.*, q.customer_name FROM outbox o JOIN quotes q ON q.id = o.quote_id"
+            " WHERE substr(o.created_at, 1, 10) = ? ORDER BY o.id", (format_ts(current_now())[:10],)).fetchall()
+        conn.close()
+        return render_template("index.html", f=followups, counts=counts, messages=messages)
+
+    @app.get("/quotes")
+    def all_quotes():
+        conn = db()
+        followups = build_followups(conn, current_now())
         conn.close()
         states = sorted(followups.states.values(), key=lambda s: s.id)
-        return render_template("index.html", f=followups, states=states, counts=counts, messages=messages)
+        return render_template("quotes.html", states=states)
 
     def back():
         return redirect(url_for("index", now=request.args.get("now")) + "#outbox")
@@ -94,7 +108,9 @@ def create_app(db_path=None, provider=None):
         conn = db()
         outcome, detail = ob.send(conn, oid, provider, current_now())
         conn.close()
-        flash(f"Message {oid}: {outcome}. {detail}", "info" if outcome == "sent" else "error")
+        # A successful send shows in the outbox row itself; only surface problems.
+        if outcome != "sent":
+            flash(f"Message {oid}: {outcome}. {detail}", "error")
         return back()
 
     @app.get("/quotes/<quote_id>")
@@ -136,12 +152,15 @@ def create_app(db_path=None, provider=None):
 
     @app.post("/reset")
     def reset():
-        conn = db()
+        # Drop and recreate (not just DELETE), so schema changes take effect on a dev database.
+        conn = connect(app.config["DB"])
         with conn:
             for table in ("outbox", "events", "quotes"):
-                conn.execute(f"DELETE FROM {table}")
+                conn.execute(f"DROP TABLE IF EXISTS {table}")
+        init_db(conn)
         conn.close()
-        flash("Database cleared.", "info")
+        provider.reset()
+        flash("Database and fake SMS log cleared.", "info")
         return redirect(url_for("index", now=request.args.get("now")))
 
     return app
@@ -150,4 +169,4 @@ def create_app(db_path=None, provider=None):
 app = create_app()
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    app.run(debug=True, port=5001)  # 5000 is taken by AirPlay Receiver on macOS

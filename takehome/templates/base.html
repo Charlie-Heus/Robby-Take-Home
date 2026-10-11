@@ -6,7 +6,7 @@
   <title>{% block title %}Follow-up engine{% endblock %}</title>
   <style>
     :root { --fg: #1d1d1f; --muted: #6e6e73; --line: #e3e3e6; --bg: #fff; --soft: #f6f6f8;
-            --t1: #c0392b; --t2: #d35400; --t3: #2c6fbb; --t4: #7f8c8d; --warn: #fff4e5; --err: #fdecea; }
+            --t1: #c0392b; --t2: #d35400; --t3: #2c6fbb; --t4: #7f8c8d; --err: #fdecea; }
     * { box-sizing: border-box; }
     body { font: 14px/1.45 -apple-system, system-ui, sans-serif; color: var(--fg); background: var(--bg); margin: 0; }
     header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 12px 20px;
@@ -14,7 +14,11 @@
     header h1 { font-size: 16px; margin: 0 12px 0 0; }
     header h1 a { color: inherit; text-decoration: none; }
     header form { display: flex; gap: 6px; align-items: center; margin: 0; }
-    main { padding: 16px 20px 40px; max-width: 1200px; }
+    main { padding: 16px 20px 40px; max-width: 1600px; }
+    nav { display: flex; gap: 12px; margin-right: 12px; }
+    .side-by-side { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; }
+    @media (max-width: 1100px) { .side-by-side { grid-template-columns: 1fr; } }
+    .below { margin-top: 10px; }
     h2 { font-size: 15px; margin: 28px 0 8px; }
     h2 small { color: var(--muted); font-weight: normal; }
     table { border-collapse: collapse; width: 100%; }
@@ -27,11 +31,11 @@
     .tier-3 { background: var(--t3); } .tier-4 { background: var(--t4); }
     .flash { padding: 6px 10px; margin: 4px 0; border-radius: 4px; background: var(--soft); }
     .flash.error { background: var(--err); }
-    .diff { background: var(--warn); }
     .muted { color: var(--muted); }
     .pill { font-size: 11px; padding: 0 6px; border: 1px solid var(--line); border-radius: 8px; color: var(--muted); }
     .status-draft { border-color: #999; color: var(--fg); } .status-approved { border-color: var(--t3); color: var(--t3); }
     .status-sent { border-color: #2e7d32; color: #2e7d32; } .status-failed { border-color: var(--t1); color: var(--t1); }
+    .status-blocked { border-color: var(--t2); color: var(--t2); } .status-cancelled { color: var(--muted); }
     details summary { cursor: pointer; color: var(--muted); }
     pre { background: var(--soft); padding: 8px; margin: 4px 0; font-size: 12px; overflow-x: auto; }
     dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0; }
@@ -44,6 +48,10 @@
 <body>
 <header>
   <h1><a href="{{ url_for('index', now=now_param) }}">Follow-up engine</a></h1>
+  <nav>
+    <a href="{{ url_for('index', now=now_param) }}">Today</a>
+    <a href="{{ url_for('all_quotes', now=now_param) }}">All quotes</a>
+  </nav>
   <form method="get" action="{{ request.path }}">
     <label>Now (UTC) <input type="datetime-local" name="now" value="{{ now_param }}"></label>
     <button>Go</button>

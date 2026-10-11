@@ -1,3 +1,9 @@
+[project]
+name = "takehome"
+version = "0.1.0"
+description = "Follow-up engine for open home-service quotes (Robby take-home)"
+requires-python = ">=3.11"
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]

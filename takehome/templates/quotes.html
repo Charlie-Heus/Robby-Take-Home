@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}All quotes · Follow-up engine{% endblock %}
+{% block content %}
+<h2 style="margin-top:0">All quotes <small>snapshot (quotes.json) vs. derived from events, as of {{ now | ts }} UTC</small></h2>
+{% if not states %}
+  <p>No data yet. Click <strong>Load seed data</strong>.</p>
+{% else %}
+<div class="wrap"><table>
+  <tr>
+    <th>Quote</th><th>Customer</th><th>Phone</th><th>Tech</th><th class="num">Amount</th>
+    <th>Snapshot status</th><th>Derived status</th>
+    <th>Snapshot last contact</th><th>Derived last outbound</th>
+    <th>Last view</th>
+  </tr>
+  {% for s in states %}
+  <tr>
+    <td><a href="{{ url_for('quote_detail', quote_id=s.id, now=now_param) }}">{{ s.id }}</a></td>
+    <td>{{ s.quote.customer_name }}</td>
+    <td>{{ s.phone }}</td>
+    <td>{{ s.quote.tech_name }}</td>
+    <td class="num">${{ "{:,}".format(s.amount) }}</td>
+    <td>{{ s.quote.status }}</td>
+    <td>{{ s.status }}</td>
+    <td>{{ s.quote.last_contact_at | ts }}</td>
+    <td>{{ s.last_outbound | ts }}</td>
+    <td>{{ s.last_view | ts }}</td>
+  </tr>
+  {% endfor %}
+</table></div>
+{% endif %}
+{% endblock %}

@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ quote.id }} · Follow-up engine{% endblock %}
 {% block content %}
-<p><a href="{{ url_for('index', now=now_param) }}">← All quotes</a></p>
+<p><a href="{{ url_for('index', now=now_param) }}">← Today</a> · <a href="{{ url_for('all_quotes', now=now_param) }}">All quotes</a></p>
 <h2 style="margin-top:0">{{ quote.id }} · {{ quote.customer_name }} · ${{ "{:,}".format(quote.amount) }}</h2>
 
 {% if candidate %}
@@ -29,8 +29,8 @@
   <div>
     <h2>Derived <small>as of {{ now | ts }}</small></h2>
     <dl>
-      <dt>Status</dt><dd class="{{ 'diff' if state.status != quote.status }}">{{ state.status }}</dd>
-      <dt>Last outbound</dt><dd class="{{ 'diff' if state.contact_disagrees }}">{{ state.last_outbound | ts }}</dd>
+      <dt>Status</dt><dd>{{ state.status }}</dd>
+      <dt>Last outbound</dt><dd>{{ state.last_outbound | ts }}</dd>
       <dt>Outbound messages</dt><dd>{{ state.outbound_count }}</dd>
       <dt>Last view</dt><dd>{{ state.last_view | ts }}</dd>
       <dt>Views since contact</dt><dd>{{ state.views_since_outbound }}</dd>
