@@ -157,3 +157,20 @@ The seed data doesn't carry these, so the policy doesn't use them yet:
 - **Opt-outs (STOP):** a hard filter, required by law.
 - **Quote expiry dates and job urgency:** a broken AC in August can't wait.
 - **The tech's notes and repeat customers.**
+
+## Scaling to 50 shops
+
+> What changes when this runs for a parent company with 50 shops, each with their own quotes, phone numbers, and opinions about what "follow up" means?
+
+To me, the most obvious thing that changes is that the engine needs to become much more customizable with many more options that suit the preferences of the people running the individual shops. For instance, right now the engine is set up so that 10 clients are identified as the strongest candidates for follow-up messages. Features like this would need to be able to be adjusted to suit individual preferences. People running each individual shop would need to be able to define their own follow-up policy, priority filtering, and things of that nature. We would also want to add another observational layer so that the parent company owning all 50 shops could observe the interactions going on at a company-wide level, as well as on an individual shop level. The guardrails would still remain defined by the parent company. The parent company would still set the rules to never message a customer who has already accepted or dismissed a quote, allow customers to opt out using STOP or something similar, not spam the same customer, etc.
+
+I think this would be relatively simple to implement. Since all of these settings exist in one place in the code, you would not need to change much. You would just need to give each shop within the parent company its own settings. The data from each shop would also need to remain separate, at least for the most part. It could be an issue if there are quotes from the same client at two shops. For this, there would need to be additional guardrails put in place to prevent overlapping messages. For the purposes of the parent company and helping them optimize their business, it would be very useful to track the correlation between different settings on the shop level and observe which settings lead to more replies and more accepted quotes. This could significantly help the parent company optimize their strategy.
+
+## What I would build next with more time
+
+- A way for customers to opt out / end communication with STOP.
+- Let the owner edit drafts.
+- Remove accepted / dismissed quotes from the Today tab. Add a new tab for these. There you can click on the quotes and view all of the previous communication.
+- Connect a real text provider.
+- Mark a message as "sending" before handing it to the text provider. If the result is unclear, like a timeout or a crash halfway through, send it to a person to check manually.
+- Build a system that measures which settings and communication strategies lead to more replies and more accepted quotes.
