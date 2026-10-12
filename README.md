@@ -2,6 +2,8 @@
 
 An MVP that looks at open home-service quotes, decides who to follow up with and why, drafts the messages, and sends them only after a person approves.
 
+The full Claude Code conversation used to build this is in [`robby_claude_session.txt`](robby_claude_session.txt).
+
 ## Running it
 
 Needs Python 3.11+.
